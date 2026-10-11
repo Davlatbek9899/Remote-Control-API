@@ -1,0 +1,252 @@
+from fastapi import FastAPI, HTTPException, Header
+from pydantic import BaseModel, EmailStr
+from datetime import datetime, timedelta
+from database import get_connection
+from auth import hash_password, verify_password, create_token, decode_token, generate_verify_code
+from email_service import send_verify_email
+
+app = FastAPI(title="Remote Control API")
+
+class RegisterRequest(BaseModel):
+    username: str
+    email: str
+    password: str
+
+class LoginRequest(BaseModel):
+    email_or_username: str
+    password: str
+
+class VerifyRequest(BaseModel):
+    email: str
+    code: str
+
+@app.get("/")
+def root():
+    return {"status": "Remote Control API ishlayapti!"}
+
+@app.post("/auth/register")
+def register(data: RegisterRequest):
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        # Username yoki email mavjudmi?
+        cur.execute("SELECT id FROM users WHERE email=%s OR username=%s", (data.email, data.username))
+        if cur.fetchone():
+            raise HTTPException(status_code=400, detail="Email yoki username allaqachon mavjud")
+
+        # Verify code
+        code = generate_verify_code()
+        expires = datetime.utcnow() + timedelta(minutes=10)
+
+        # Userni saqlash
+        password_hash = hash_password(data.password)
+        cur.execute(
+            "INSERT INTO users (username, email, password_hash, verify_code, verify_code_expires) VALUES (%s, %s, %s, %s, %s) RETURNING id",
+            (data.username, data.email, password_hash, code, expires)
+        )
+        user_id = cur.fetchone()["id"]
+
+        # Profile yaratish
+        cur.execute("INSERT INTO user_profiles (user_id) VALUES (%s)", (user_id,))
+        conn.commit()
+
+        # Email yuborish
+        send_verify_email(data.email, code)
+
+        return {"message": "Ro'yxatdan o'tish muvaffaqiyatli! Emailni tasdiqlang.", "user_id": user_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cur.close()
+        conn.close()
+
+@app.post("/auth/verify")
+def verify_email(data: VerifyRequest):
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT id, verify_code, verify_code_expires FROM users WHERE email=%s", (data.email,))
+        user = cur.fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="User topilmadi")
+        if user["verify_code"] != data.code:
+            raise HTTPException(status_code=400, detail="Noto'g'ri kod")
+        if datetime.utcnow().replace(tzinfo=None) > user["verify_code_expires"].replace(tzinfo=None):
+            raise HTTPException(status_code=400, detail="Kod muddati tugagan")
+
+        cur.execute("UPDATE users SET is_verified=TRUE, verify_code=NULL WHERE id=%s", (user["id"],))
+        conn.commit()
+
+        token = create_token(user["id"])
+        return {"message": "Email tasdiqlandi!", "token": token}
+    finally:
+        cur.close()
+        conn.close()
+
+@app.post("/auth/login")
+def login(data: LoginRequest):
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT id, password_hash, is_verified FROM users WHERE email=%s OR username=%s",
+            (data.email_or_username, data.email_or_username)
+        )
+        user = cur.fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="User topilmadi")
+        if not verify_password(data.password, user["password_hash"]):
+            raise HTTPException(status_code=400, detail="Noto'g'ri parol")
+        if not user["is_verified"]:
+            raise HTTPException(status_code=400, detail="Email tasdiqlanmagan")
+
+        token = create_token(user["id"])
+        return {"message": "Kirish muvaffaqiyatli!", "token": token}
+    finally:
+        cur.close()
+        conn.close()
+
+@app.post("/auth/forgot-password")
+def forgot_password(data: dict):
+    email = data.get("email", "")
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT id FROM users WHERE email=%s", (email,))
+        user = cur.fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="Bu email topilmadi")
+        
+        code = generate_verify_code()
+        expires = datetime.utcnow() + timedelta(minutes=10)
+        cur.execute("UPDATE users SET verify_code=%s, verify_code_expires=%s WHERE email=%s",
+                   (code, expires, email))
+        conn.commit()
+        send_verify_email(email, code)
+        return {"message": "Kod emailga yuborildi"}
+    finally:
+        cur.close()
+        conn.close()
+
+@app.post("/auth/reset-password")
+def reset_password(data: dict):
+    email = data.get("email", "")
+    code = data.get("code", "")
+    new_password = data.get("new_password", "")
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT id, verify_code, verify_code_expires FROM users WHERE email=%s", (email,))
+        user = cur.fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="User topilmadi")
+        if user["verify_code"] != code:
+            raise HTTPException(status_code=400, detail="Noto'g'ri kod")
+        if datetime.utcnow().replace(tzinfo=None) > user["verify_code_expires"].replace(tzinfo=None):
+            raise HTTPException(status_code=400, detail="Kod muddati tugagan")
+        
+        from auth import hash_password
+        new_hash = hash_password(new_password)
+        cur.execute("UPDATE users SET password_hash=%s, verify_code=NULL WHERE id=%s",
+                   (new_hash, user["id"]))
+        conn.commit()
+        return {"message": "Parol muvaffaqiyatli o'zgartirildi"}
+    finally:
+        cur.close()
+        conn.close()
+
+@app.get("/auth/me")
+def get_me(authorization: str = Header(...)):
+    token = authorization.replace("Bearer ", "")
+    try:
+        user_id = decode_token(token)
+    except:
+        raise HTTPException(status_code=401, detail="Token noto'g'ri")
+
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT u.id, u.username, u.email, u.created_at, p.full_name, p.profile_picture, p.age, p.phone FROM users u LEFT JOIN user_profiles p ON u.id=p.user_id WHERE u.id=%s",
+            (user_id,)
+        )
+        user = cur.fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="User topilmadi")
+        return dict(user)
+    finally:
+        cur.close()
+        conn.close()
+
+
+# Cache
+audio_cache = {}
+
+@app.get("/audio/stream")
+async def get_audio_url(query: str):
+    """YouTube dan audio URL olish"""
+    import subprocess
+    import json
+    import time
+    
+    # Cache tekshirish
+    cache_key = query.lower().strip()
+    if cache_key in audio_cache:
+        cached = audio_cache[cache_key]
+        if time.time() - cached["time"] < 3600:  # 1 soat
+            return cached["data"]
+    
+    try:
+        # Avval qidirish
+        search_result = subprocess.run([
+            "/Library/Frameworks/Python.framework/Versions/3.14/bin/yt-dlp",
+            f"ytsearch1:{query}",
+            "--get-id",
+            "--no-playlist",
+            "--quiet"
+        ], capture_output=True, text=True, timeout=15)
+        
+        video_id = search_result.stdout.strip()
+        if not video_id:
+            raise HTTPException(status_code=404, detail="Video topilmadi")
+        
+        # Audio URL olish
+        url_result = subprocess.run([
+            "/Library/Frameworks/Python.framework/Versions/3.14/bin/yt-dlp",
+            f"https://www.youtube.com/watch?v={video_id}",
+            "-f", "bestaudio[ext=m4a]/bestaudio/best",
+            "--get-url",
+            "--no-playlist",
+            "--quiet"
+        ], capture_output=True, text=True, timeout=15)
+        
+        audio_url = url_result.stdout.strip()
+        if not audio_url:
+            raise HTTPException(status_code=404, detail="Audio URL topilmadi")
+        
+        # Title olish
+        title_result = subprocess.run([
+            "/Library/Frameworks/Python.framework/Versions/3.14/bin/yt-dlp",
+            f"https://www.youtube.com/watch?v={video_id}",
+            "--get-title",
+            "--no-playlist",
+            "--quiet"
+        ], capture_output=True, text=True, timeout=15)
+        
+        title = title_result.stdout.strip()
+        
+        result = {
+            "video_id": video_id,
+            "title": title,
+            "audio_url": audio_url
+        }
+        # Cache ga saqlaymiz
+        audio_cache[cache_key] = {"data": result, "time": time.time()}
+        return result
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=408, detail="Timeout")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

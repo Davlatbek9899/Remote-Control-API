@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# IDE / macOS
+.idea/
+.vscode/
+.DS_Store
+
+# Cache
+.pytest_cache/
+.mypy_cache/
+EOFcat > .gitignore <<'EOF'
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# IDE / macOS
+.idea/
+.vscode/
+.DS_Store
+
+# Cache
+.pytest_cache/
+.mypy_cache/
