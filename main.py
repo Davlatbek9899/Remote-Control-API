@@ -202,7 +202,7 @@ async def get_audio_url(query: str):
     try:
         # Avval qidirish
         search_result = subprocess.run([
-            "/Library/Frameworks/Python.framework/Versions/3.14/bin/yt-dlp",
+            "yt-dlp",
             f"ytsearch1:{query}",
             "--get-id",
             "--no-playlist",
@@ -215,7 +215,7 @@ async def get_audio_url(query: str):
         
         # Audio URL olish
         url_result = subprocess.run([
-            "/Library/Frameworks/Python.framework/Versions/3.14/bin/yt-dlp",
+            "yt-dlp",
             f"https://www.youtube.com/watch?v={video_id}",
             "-f", "bestaudio[ext=m4a]/bestaudio/best",
             "--get-url",
@@ -229,7 +229,7 @@ async def get_audio_url(query: str):
         
         # Title olish
         title_result = subprocess.run([
-            "/Library/Frameworks/Python.framework/Versions/3.14/bin/yt-dlp",
+            "yt-dlp",
             f"https://www.youtube.com/watch?v={video_id}",
             "--get-title",
             "--no-playlist",
