@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel, EmailStr
 from datetime import datetime, timedelta
@@ -199,6 +200,11 @@ async def get_audio_url(query: str):
         if time.time() - cached["time"] < 3600:  # 1 soat
             return cached["data"]
     
+    # Agar cookies.txt mavjud bo'lsa, har bir yt-dlp chaqiruviga qo'shamiz —
+    # bu YouTube'ning server (datacenter) IP'larini "bot" deb bloklashining oldini oladi.
+    cookies_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt")
+    cookies_args = ["--cookies", cookies_path] if os.path.exists(cookies_path) else []
+
     try:
         # Avval qidirish
         search_result = subprocess.run([
@@ -206,7 +212,8 @@ async def get_audio_url(query: str):
             f"ytsearch1:{query}",
             "--get-id",
             "--no-playlist",
-            "--quiet"
+            "--quiet",
+            *cookies_args
         ], capture_output=True, text=True, timeout=15)
         
         video_id = search_result.stdout.strip()
@@ -220,7 +227,8 @@ async def get_audio_url(query: str):
             "-f", "bestaudio[ext=m4a]/bestaudio/best",
             "--get-url",
             "--no-playlist",
-            "--quiet"
+            "--quiet",
+            *cookies_args
         ], capture_output=True, text=True, timeout=15)
         
         audio_url = url_result.stdout.strip()
@@ -233,7 +241,8 @@ async def get_audio_url(query: str):
             f"https://www.youtube.com/watch?v={video_id}",
             "--get-title",
             "--no-playlist",
-            "--quiet"
+            "--quiet",
+            *cookies_args
         ], capture_output=True, text=True, timeout=15)
         
         title = title_result.stdout.strip()
