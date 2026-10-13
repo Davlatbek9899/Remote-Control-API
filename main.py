@@ -209,6 +209,13 @@ async def get_audio_url(query: str):
     if not youtube_api_key:
         raise HTTPException(status_code=500, detail="YOUTUBE_API_KEY sozlanmagan")
 
+    # venv ichidagi yt-dlp'ni aniq ko'rsatamiz — unda bgutil-ytdlp-pot-provider plagini bor.
+    # systemd xizmati ichida oddiy "yt-dlp" buyrug'i PATH orqali plaginsiz global
+    # nusxani topib qolishi mumkin, shuning uchun to'liq yo'lni ishlatamiz.
+    yt_dlp_bin = os.path.join(os.path.dirname(os.path.abspath(__file__)), "venv", "bin", "yt-dlp")
+    if not os.path.exists(yt_dlp_bin):
+        yt_dlp_bin = "yt-dlp"
+
     try:
         # Qidiruvni yt-dlp o'rniga rasmiy YouTube Data API orqali qilamiz — bu
         # yt-dlp'ning o'z qidiruvi (ytsearch) ko'pincha YouTube'ning bot-aniqlash
@@ -238,14 +245,18 @@ async def get_audio_url(query: str):
         # Faqat audio URL uchun yt-dlp'ni ishlatamiz (videoId allaqachon ma'lum,
         # qidiruv qilinmaydi — shuning uchun bot-aniqlashga tushish ehtimoli kamroq)
         url_result = subprocess.run([
-            "yt-dlp",
+            yt_dlp_bin,
             f"https://www.youtube.com/watch?v={video_id}",
             "-f", "bestaudio[ext=m4a]/bestaudio/best",
             "--get-url",
             "--no-playlist",
             "--quiet",
+            # android_vr,mweb klientlari bgutil PoToken-provayder bilan birga ishlatilganda
+            # YouTube'ning standart (visionos/web) klientlari duch keladigan "bot" tekshiruvini
+            # chetlab o'tadi — standart klientlar PoToken so'rovini umuman ishga tushirmaydi.
+            "--extractor-args", "youtube:player_client=android_vr,mweb",
             *cookies_args
-        ], capture_output=True, text=True, timeout=15)
+        ], capture_output=True, text=True, timeout=20)
 
         audio_url = url_result.stdout.strip()
         if not audio_url:
