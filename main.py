@@ -200,27 +200,43 @@ async def get_audio_url(query: str):
         if time.time() - cached["time"] < 3600:  # 1 soat
             return cached["data"]
     
-    # Agar cookies.txt mavjud bo'lsa, har bir yt-dlp chaqiruviga qo'shamiz —
+    # Agar cookies.txt mavjud bo'lsa, yt-dlp chaqiruviga qo'shamiz —
     # bu YouTube'ning server (datacenter) IP'larini "bot" deb bloklashining oldini oladi.
     cookies_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt")
     cookies_args = ["--cookies", cookies_path] if os.path.exists(cookies_path) else []
 
+    youtube_api_key = os.getenv("YOUTUBE_API_KEY", "")
+    if not youtube_api_key:
+        raise HTTPException(status_code=500, detail="YOUTUBE_API_KEY sozlanmagan")
+
     try:
-        # Avval qidirish
-        search_result = subprocess.run([
-            "yt-dlp",
-            f"ytsearch1:{query}",
-            "--get-id",
-            "--no-playlist",
-            "--quiet",
-            *cookies_args
-        ], capture_output=True, text=True, timeout=15)
-        
-        video_id = search_result.stdout.strip()
-        if not video_id:
+        # Qidiruvni yt-dlp o'rniga rasmiy YouTube Data API orqali qilamiz — bu
+        # yt-dlp'ning o'z qidiruvi (ytsearch) ko'pincha YouTube'ning bot-aniqlash
+        # tizimiga tushib qolgani uchun, brauzerdagi kabi ishonchli natija beradi.
+        import urllib.request
+        import urllib.parse
+
+        search_params = urllib.parse.urlencode({
+            "part": "snippet",
+            "q": query,
+            "type": "video",
+            "videoCategoryId": "10",  # Music
+            "maxResults": 1,
+            "key": youtube_api_key
+        })
+        search_url = f"https://www.googleapis.com/youtube/v3/search?{search_params}"
+        with urllib.request.urlopen(search_url, timeout=10) as resp:
+            search_data = json.loads(resp.read().decode())
+
+        items = search_data.get("items", [])
+        if not items:
             raise HTTPException(status_code=404, detail="Video topilmadi")
-        
-        # Audio URL olish
+
+        video_id = items[0]["id"]["videoId"]
+        title = items[0]["snippet"]["title"]
+
+        # Faqat audio URL uchun yt-dlp'ni ishlatamiz (videoId allaqachon ma'lum,
+        # qidiruv qilinmaydi — shuning uchun bot-aniqlashga tushish ehtimoli kamroq)
         url_result = subprocess.run([
             "yt-dlp",
             f"https://www.youtube.com/watch?v={video_id}",
@@ -230,23 +246,11 @@ async def get_audio_url(query: str):
             "--quiet",
             *cookies_args
         ], capture_output=True, text=True, timeout=15)
-        
+
         audio_url = url_result.stdout.strip()
         if not audio_url:
             raise HTTPException(status_code=404, detail="Audio URL topilmadi")
-        
-        # Title olish
-        title_result = subprocess.run([
-            "yt-dlp",
-            f"https://www.youtube.com/watch?v={video_id}",
-            "--get-title",
-            "--no-playlist",
-            "--quiet",
-            *cookies_args
-        ], capture_output=True, text=True, timeout=15)
-        
-        title = title_result.stdout.strip()
-        
+
         result = {
             "video_id": video_id,
             "title": title,
