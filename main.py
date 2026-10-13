@@ -243,27 +243,38 @@ async def get_audio_url(query: str):
         title = items[0]["snippet"]["title"]
 
         # Faqat audio URL uchun yt-dlp'ni ishlatamiz (videoId allaqachon ma'lum,
-        # qidiruv qilinmaydi — shuning uchun bot-aniqlashga tushish ehtimoli kamroq)
-        url_result = subprocess.run([
-            yt_dlp_bin,
-            f"https://www.youtube.com/watch?v={video_id}",
-            "-f", "bestaudio[ext=m4a]/bestaudio/best",
-            "--get-url",
-            "--no-playlist",
-            "--quiet",
-            # android_vr,mweb klientlari bgutil PoToken-provayder bilan birga ishlatilganda
-            # YouTube'ning standart (visionos/web) klientlari duch keladigan "bot" tekshiruvini
-            # chetlab o'tadi — standart klientlar PoToken so'rovini umuman ishga tushirmaydi.
-            "--extractor-args", "youtube:player_client=android_vr,mweb",
-            *cookies_args
-        ], capture_output=True, text=True, timeout=20)
+        # qidiruv qilinmaydi — shuning uchun bot-aniqlashga tushish ehtimoli kamroq).
+        # Ba'zi videolar ma'lum klient kombinatsiyasida bot-tekshiruviga tushib qolishi
+        # mumkin — shuning uchun bir nechta kombinatsiyani ketma-ket sinaymiz.
+        client_combos = [
+            "android_vr,mweb",
+            "tv,web_safari",
+            "mweb",
+            "default",
+        ]
+        audio_url = ""
+        last_stderr = ""
+        for combo in client_combos:
+            url_result = subprocess.run([
+                yt_dlp_bin,
+                f"https://www.youtube.com/watch?v={video_id}",
+                "-f", "bestaudio[ext=m4a]/bestaudio/best",
+                "--get-url",
+                "--no-playlist",
+                "--quiet",
+                "--extractor-args", f"youtube:player_client={combo}",
+                *cookies_args
+            ], capture_output=True, text=True, timeout=20)
+            audio_url = url_result.stdout.strip()
+            last_stderr = url_result.stderr.strip()
+            if audio_url:
+                break
 
-        audio_url = url_result.stdout.strip()
         if not audio_url:
             # yt-dlp'ning xato matnini ham qo'shamiz — shunda sabab darhol ko'rinadi
             raise HTTPException(
                 status_code=404,
-                detail=f"Audio URL topilmadi: {url_result.stderr.strip()[-500:]}"
+                detail=f"Audio URL topilmadi: {last_stderr[-500:]}"
             )
 
         result = {
