@@ -260,7 +260,11 @@ async def get_audio_url(query: str):
 
         audio_url = url_result.stdout.strip()
         if not audio_url:
-            raise HTTPException(status_code=404, detail="Audio URL topilmadi")
+            # yt-dlp'ning xato matnini ham qo'shamiz — shunda sabab darhol ko'rinadi
+            raise HTTPException(
+                status_code=404,
+                detail=f"Audio URL topilmadi: {url_result.stderr.strip()[-500:]}"
+            )
 
         result = {
             "video_id": video_id,
@@ -270,6 +274,8 @@ async def get_audio_url(query: str):
         # Cache ga saqlaymiz
         audio_cache[cache_key] = {"data": result, "time": time.time()}
         return result
+    except HTTPException:
+        raise  # ataylab chiqargan xatoliklarni (404 va h.k.) o'zgartirmasdan uzatamiz
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=408, detail="Timeout")
     except Exception as e:
