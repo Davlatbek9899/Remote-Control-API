@@ -19,8 +19,19 @@ _offset = 0
 
 
 def _parse_password(text: str):
-    """"#ping_1234" -> ("#ping", "1234"). Parol topilmasa (text, None) qaytaradi."""
+    """"#ping_1234" -> ("#ping", "1234"). Parol topilmasa (text, None) qaytaradi.
+
+    "#AI9899" kabi maxsus holatni ham tushunadi — bu yerda parol "_" bilan emas,
+    to'g'ridan-to'g'ri "ai" prefiksidan keyin yopishtirilgan (Android ilovasidagi
+    TelegramService'ning AI faollashtirish buyrug'i aynan shu formatda).
+    """
     text = text.strip()
+
+    if text.lower().startswith("#ai") and len(text) >= 7:
+        candidate = text[3:7]
+        if candidate.isdigit():
+            return text[:3], candidate
+
     idx = text.rfind("_")
     if idx == -1:
         return text, None
