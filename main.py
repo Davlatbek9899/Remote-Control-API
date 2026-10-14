@@ -41,6 +41,19 @@ def telegram_send(req: TelegramSendRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+from fastapi import UploadFile, File, Form
+
+
+@app.post("/telegram/send_photo")
+async def telegram_send_photo(chat_id: str = Form(...), caption: str = Form(""), photo: UploadFile = File(...)):
+    try:
+        photo_bytes = await photo.read()
+        telegram_relay.send_photo(chat_id, photo_bytes, photo.filename or "photo.jpg", caption)
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 class RegisterRequest(BaseModel):
     username: str
     email: str
