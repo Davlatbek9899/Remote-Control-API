@@ -5,8 +5,41 @@ from datetime import datetime, timedelta
 from database import get_connection
 from auth import hash_password, verify_password, create_token, decode_token, generate_verify_code
 from email_service import send_verify_email
+import telegram_relay
 
 app = FastAPI(title="Remote Control API")
+
+
+@app.on_event("startup")
+def _start_telegram_relay():
+    telegram_relay.start_polling()
+
+
+@app.get("/telegram/poll")
+def telegram_poll(password: str):
+    """Qurilma o'z paroli bilan shu yerga murojaat qilib, faqat o'ziga tegishli yangi xabarlarni oladi."""
+    return {"messages": telegram_relay.pop_messages(password)}
+
+
+class TelegramSendRequest(BaseModel):
+    chat_id: str
+    type: str = "text"  # "text" | "location"
+    text: str = ""
+    lat: float = 0.0
+    lng: float = 0.0
+
+
+@app.post("/telegram/send")
+def telegram_send(req: TelegramSendRequest):
+    """Qurilma javobni shu orqali yuboradi — bot token qurilmada saqlanmaydi, faqat serverda."""
+    try:
+        if req.type == "location":
+            telegram_relay.send_location(req.chat_id, req.lat, req.lng)
+        else:
+            telegram_relay.send_message(req.chat_id, req.text)
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 class RegisterRequest(BaseModel):
     username: str
