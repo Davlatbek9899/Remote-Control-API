@@ -64,6 +64,7 @@ class LoginRequest(BaseModel):
     password: str
     device_name: str = "Noma'lum qurilma"
     force: bool = False
+    command_password: str = ""
 
 class VerifyRequest(BaseModel):
     email: str
@@ -154,7 +155,7 @@ def login(data: LoginRequest):
 
         # Bitta hisob — bitta qurilma: boshqa qurilmada faol sessiya bor-yo'qligini tekshiramiz
         cur.execute(
-            "SELECT id, device_name FROM sessions WHERE user_id=%s AND is_active=TRUE",
+            "SELECT id, device_name, command_password FROM sessions WHERE user_id=%s AND is_active=TRUE",
             (user["id"],)
         )
         existing_session = cur.fetchone()
@@ -167,17 +168,57 @@ def login(data: LoginRequest):
 
         if existing_session and data.force:
             cur.execute("UPDATE sessions SET is_active=FALSE WHERE id=%s", (existing_session["id"],))
+            # Eski qurilmaga to'g'ridan-to'g'ri "chiqib ket" signalini yuboramiz — u buni
+            # allaqachon har soniyada qilayotgan so'rovi orqali darhol oladi.
+            old_password = existing_session.get("command_password")
+            if old_password:
+                telegram_relay.push_system_item(old_password, {"type": "force_logout"})
 
         token = create_token(user["id"])
         cur.execute(
-            "INSERT INTO sessions (user_id, device_name, token) VALUES (%s, %s, %s)",
-            (user["id"], data.device_name, token)
+            "INSERT INTO sessions (user_id, device_name, token, command_password) VALUES (%s, %s, %s, %s)",
+            (user["id"], data.device_name, token, data.command_password or None)
         )
         conn.commit()
 
         return {"message": "Kirish muvaffaqiyatli!", "token": token}
     except HTTPException:
         raise
+    finally:
+        cur.close()
+        conn.close()
+
+@app.get("/auth/validate-session")
+def validate_session(authorization: str = Header(None)):
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Token berilmagan")
+    token = authorization.replace("Bearer ", "")
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT is_active FROM sessions WHERE token=%s", (token,))
+        session = cur.fetchone()
+        valid = session is not None and session["is_active"]
+        return {"valid": valid}
+    finally:
+        cur.close()
+        conn.close()
+
+@app.post("/auth/sync-password")
+def sync_password(data: dict, authorization: str = Header(None)):
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Token berilmagan")
+    token = authorization.replace("Bearer ", "")
+    command_password = data.get("command_password", "")
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "UPDATE sessions SET command_password=%s WHERE token=%s AND is_active=TRUE",
+            (command_password, token)
+        )
+        conn.commit()
+        return {"message": "Sinxronlandi"}
     finally:
         cur.close()
         conn.close()

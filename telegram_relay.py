@@ -154,6 +154,13 @@ def start_polling():
     thread.start()
 
 
+def push_system_item(password: str, item: dict):
+    """Telegram'dan kelmagan, server o'zi yuboradigan buyruq (masalan force_logout)."""
+    if not password:
+        return
+    _enqueue(password, "", item)
+
+
 def pop_messages(password: str):
     with _lock:
         _last_poll[password] = time.time()

@@ -9,3 +9,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user_active ON sessions (user_id, is_active);
+
+-- Qurilmaning Telegram buyruq paroli — "sessiyani tugatish" bosilganda, serverning
+-- o'sha parolning navbatiga to'g'ridan-to'g'ri signal yuborishi uchun kerak.
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS command_password TEXT;
