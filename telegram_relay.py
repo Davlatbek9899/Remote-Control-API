@@ -14,8 +14,18 @@ _lock = threading.Lock()
 # chat_id -> parol — shu chat hozir qaysi parolning AI (Jarvis) sessiyasiga tegishli ekanini bilish uchun
 # (parolsiz kelgan davomiy xabarlarni to'g'ri qurilmaga yo'naltirish uchun kerak)
 _active_password_by_chat = {}
+# parol -> shu parol bilan oxirgi marta qachon so'rov kelgani (qurilma "tirik"ligini bilish uchun)
+_last_poll = {}
+# Ilova odatda har soniyada so'rov yuboradi — shundan ancha uzoq vaqt javob bo'lmasa, "ulanmagan" deb hisoblaymiz
+ALIVE_THRESHOLD_SECONDS = 10
 
 _offset = 0
+
+
+def _is_alive(password: str) -> bool:
+    with _lock:
+        last = _last_poll.get(password)
+    return last is not None and (time.time() - last) <= ALIVE_THRESHOLD_SECONDS
 
 
 def _parse_password(text: str):
@@ -78,7 +88,10 @@ def _route_update(update: dict):
         with _lock:
             active_password = _active_password_by_chat.get(chat_id)
         if active_password:
-            _enqueue(active_password, chat_id, item)
+            if _is_alive(active_password):
+                _enqueue(active_password, chat_id, item)
+            else:
+                send_message(chat_id, "📵 Dastur bilan aloqa yo'q. Iltimos, qurilmangizdan ilovani oching.")
         return
 
     if not text:
@@ -88,20 +101,30 @@ def _route_update(update: dict):
     item = {"type": "text", "text": text, "chat_id": chat_id}
 
     if password:
-        _enqueue(password, chat_id, item)
-        if command.lower().startswith("#ai"):
-            with _lock:
-                _active_password_by_chat[chat_id] = password
+        if _is_alive(password):
+            _enqueue(password, chat_id, item)
+            if command.lower().startswith("#ai"):
+                with _lock:
+                    _active_password_by_chat[chat_id] = password
+        else:
+            send_message(
+                chat_id,
+                "⚠️ Bu parol bilan hech qanday qurilma ulanmagan. Parol noto'g'ri yoki ilovaga hali "
+                "parol qo'yilmagan bo'lishi mumkin — ilovadagi \"Parol\" tugmasi orqali tekshiring."
+            )
         return
 
     # Parolsiz xabar — faqat shu chat uchun faol (AI rejimidagi) parol bo'lsa, o'shanga yo'naltiramiz
     with _lock:
         active_password = _active_password_by_chat.get(chat_id)
     if active_password:
-        _enqueue(active_password, chat_id, item)
-        if text.strip().lower() == "#stop_ai":
-            with _lock:
-                _active_password_by_chat.pop(chat_id, None)
+        if _is_alive(active_password):
+            _enqueue(active_password, chat_id, item)
+            if text.strip().lower() == "#stop_ai":
+                with _lock:
+                    _active_password_by_chat.pop(chat_id, None)
+        else:
+            send_message(chat_id, "📵 Dastur bilan aloqa yo'q. Iltimos, qurilmangizdan ilovani oching.")
 
 
 def _poll_loop():
@@ -133,6 +156,7 @@ def start_polling():
 
 def pop_messages(password: str):
     with _lock:
+        _last_poll[password] = time.time()
         msgs = _queues.get(password, [])
         _queues[password] = []
     return msgs
