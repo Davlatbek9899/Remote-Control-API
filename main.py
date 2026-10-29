@@ -62,6 +62,8 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     email_or_username: str
     password: str
+    device_name: str = "Noma'lum qurilma"
+    force: bool = False
 
 class VerifyRequest(BaseModel):
     email: str
@@ -150,8 +152,47 @@ def login(data: LoginRequest):
         if not user["is_verified"]:
             raise HTTPException(status_code=400, detail="Email tasdiqlanmagan")
 
+        # Bitta hisob — bitta qurilma: boshqa qurilmada faol sessiya bor-yo'qligini tekshiramiz
+        cur.execute(
+            "SELECT id, device_name FROM sessions WHERE user_id=%s AND is_active=TRUE",
+            (user["id"],)
+        )
+        existing_session = cur.fetchone()
+
+        if existing_session and not data.force:
+            raise HTTPException(
+                status_code=409,
+                detail={"conflict": True, "device_name": existing_session["device_name"]}
+            )
+
+        if existing_session and data.force:
+            cur.execute("UPDATE sessions SET is_active=FALSE WHERE id=%s", (existing_session["id"],))
+
         token = create_token(user["id"])
+        cur.execute(
+            "INSERT INTO sessions (user_id, device_name, token) VALUES (%s, %s, %s)",
+            (user["id"], data.device_name, token)
+        )
+        conn.commit()
+
         return {"message": "Kirish muvaffaqiyatli!", "token": token}
+    except HTTPException:
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+@app.post("/auth/logout")
+def logout(authorization: str = Header(None)):
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Token berilmagan")
+    token = authorization.replace("Bearer ", "")
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("UPDATE sessions SET is_active=FALSE WHERE token=%s", (token,))
+        conn.commit()
+        return {"message": "Chiqish muvaffaqiyatli"}
     finally:
         cur.close()
         conn.close()
